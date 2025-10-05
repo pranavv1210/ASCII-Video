@@ -1,72 +1,73 @@
 import cv2
 import os
 import time
-import numpy as np
 
-def convert_frame_to_ascii(frame, width=80):
+def frame_to_ascii(frame, width=80, target_ratio=(16, 9), ascii_chars=None):
+    """Return an ASCII-art string for `frame`.
+
+    width: number of characters across
+    target_ratio: tuple (W,H) to force output aspect (default 16:9)
     """
-    Convert a frame to ASCII art using a character set based on brightness
-    """
 
-    ascii_chars = " .:-=+*#%@"
-    
-    height = int(frame.shape[0] * width / frame.shape[1] / 2) 
-    if height == 0:
-        height = 1
-        
-    resized_frame = cv2.resize(frame, (width, height))
+    # default charset: darker characters first for higher brightness mapping
+    if ascii_chars is None:
+        ascii_chars = "@%#*+=-:. "
+    # Character cells are usually taller than they are wide; compensate
+    char_aspect = 2.0
 
-    if len(resized_frame.shape) > 2:
-        gray_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+    tw, th = target_ratio
+    height = max(1, int(width * (th / tw) / char_aspect))
+
+    resized = cv2.resize(frame, (width, height))
+    if resized.ndim > 2:
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     else:
-        gray_frame = resized_frame
-    
-    normalized = gray_frame / 255.0
-    ascii_frame = ""
-    
-    for row in normalized:
-        for pixel in row:
-            index = int(pixel * (len(ascii_chars) - 1)) 
-            ascii_frame += ascii_chars[index]
-        ascii_frame += "\n"
-    
-    return ascii_frame
+        gray = resized
 
-def play_video_in_terminal(video_path, width=80, fps=30):
-    """
-    Play Ser Harwin Strong a video in the terminal using ASCII characters
+    norm = gray / 255.0
+    # build lines with comprehension for a more compact look
+    lines = [
+        ''.join(ascii_chars[int(px * (len(ascii_chars) - 1))] for px in row)
+        for row in norm
+    ]
+
+    return '\n'.join(lines) + '\n'
+
+def play(video_path, width=80, fps=30, target_ratio=(16, 9), ascii_chars=None):
+    """Play the given video as ASCII in the terminal.
+
+    Defaults: use video's FPS when fps==0 (normal speed), and 16:9 output.
     """
     if not os.path.exists(video_path):
-        print(f"Error: Video file '{video_path}' not found.")
+        print("Error: video not found ->", video_path)
         return
-    
-    cap = cv2.VideoCapture(video_path)
 
+    cap = cv2.VideoCapture(video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_delay = 1.0 / video_fps if video_fps > 0 else 1.0 / fps
-    
+    # prefer the video's FPS when user passes 0
+    chosen_fps = video_fps if (fps == 0 or fps is None) and video_fps > 0 else (fps if fps > 0 else video_fps)
+    delay = 1.0 / chosen_fps if chosen_fps > 0 else 1.0 / 30.0
+
     try:
         while True:
-            ret, frame = cap.read()
-            if not ret:
+            ok, frame = cap.read()
+            if not ok:
                 break
-            
-            ascii_art = convert_frame_to_ascii(frame, width)
-            
+
+            art = frame_to_ascii(frame, width, target_ratio, ascii_chars)
             os.system('cls' if os.name == 'nt' else 'clear')
-            print(ascii_art)
-            
-            time.sleep(frame_delay)
-            
+            print(art)
+            time.sleep(delay)
+
     except KeyboardInterrupt:
-        print("\nVideo playback interrupted.")
-    
+        print('\nStopped.')
+
     finally:
         cap.release()
 
 if __name__ == "__main__":
 
-    video_path = input("Enter the path to the video file: ").strip()
+    video_path = input("Enter path to video: ").strip()
     
     try:
         width = int(input("Enter terminal width (default 80): ") or "80")
@@ -77,5 +78,17 @@ if __name__ == "__main__":
         fps = int(input("Enter FPS (default: use video FPS): ") or "0")
     except ValueError:
         fps = 0
-    
-    play_video_in_terminal(video_path, width, fps)
+
+    ratio_input = input("Enter target aspect ratio (W:H) (default 16:9): ").strip() or "16:9"
+    try:
+        w_str, h_str = ratio_input.split(":")
+        target_ratio = (int(w_str), int(h_str))
+    except Exception:
+        target_ratio = (16, 9)
+
+    # call the shorter name — my quick local patch
+    # let user override the character set
+    charset_input = input("Enter ASCII characters to use (leave blank for default '@%#*+=-:. '): ")
+    user_charset = charset_input.strip() or None
+
+    play(video_path, width, fps, target_ratio, user_charset)
